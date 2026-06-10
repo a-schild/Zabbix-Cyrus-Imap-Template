@@ -1,11 +1,24 @@
 # Zabbix Cyrus IMAP Template
 
-A Zabbix 7.0 template that monitors **Cyrus IMAP** worker-process saturation and
-warns you *before* a service runs out of workers.
+A Zabbix 7.0 template for **Cyrus IMAP** health monitoring, collected over the
+Zabbix agent (active). It covers:
+
+* **Worker-process saturation** — per-service worker count vs the `maxchild` cap,
+  warning *before* a service runs out of workers.
+* **Service availability & latency** — IMAP/IMAPS/POP3/POP3S/LMTP/ManageSieve.
+* **Log errors** — `IOERROR`, `DBERROR`, fatal errors / unexpected service exits.
+* **TLS certificate expiry** — days remaining on the IMAPS certificate.
+* **Supporting daemons & databases** — `master`, `idled`, `notifyd`; `mailboxes.db`
+  and `deliver.db` size growth.
+
+Saturation was the original motivation (below); the rest covers Cyrus's other
+everyday failure modes.
 
 ## The problem it solves
 
-Every service in `cyrus.conf` has a `maxchild=` cap:
+The failure mode that's hardest to catch — and the reason this template exists —
+is **worker-process saturation**. Every service in `cyrus.conf` has a `maxchild=`
+cap:
 
 ```
 imap   cmd="imapd"     listen="imap"  prefork=0 maxchild=100
@@ -31,8 +44,9 @@ before anything stalls.
 
 ## How it works
 
-A single agent item runs [`cyrus-check.sh`](cyrus-check.sh) once per interval and
-returns one JSON document:
+Most metrics come from a single agent item that runs
+[`cyrus-check.sh`](usr/local/lib/zabbix/externalscripts/cyrus-check.sh) once per
+interval and returns one JSON document:
 
 ```json
 {"master_alive":1,"idled":1,"notifyd":1,
@@ -44,10 +58,16 @@ returns one JSON document:
 ```
 
 The template turns that master item into **dependent items** via JSONPath
-preprocessing — so all metrics are collected in a single pass, with no extra
-process spawns per metric. The `maxchild` caps are read from `cyrus.conf` at
-collection time, so the utilisation percentages stay correct even if you retune
-the caps; you never edit the template.
+preprocessing — so all of those metrics are collected in a single pass, with no
+extra process spawns per metric. The `maxchild` caps are read from `cyrus.conf`
+at collection time, so the utilisation percentages stay correct even if you
+retune the caps; you never edit the template.
+
+The remaining checks are standard active agent items, so they need no custom
+script: **availability/latency** via `net.tcp.service.perf[...]` against
+`127.0.0.1`, **log errors** via `log[{$CYRUS.LOG},...]`, and the **TLS
+certificate** via the agent 2 `web.certificate.get[...]` item (with a small
+JavaScript preprocessing step to turn the expiry date into days remaining).
 
 > **Note on counts:** each protocol and its TLS/unix sibling (`imap`+`imaps`,
 > `pop3`+`pop3s`, `lmtp`+`lmtpunix`, `sieve`+`sieveold`) run a single shared
