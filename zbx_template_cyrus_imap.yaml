@@ -31,6 +31,10 @@ zabbix_export:
         Repository: https://github.com/a-schild/Zabbix-Cyrus-Imap-Template
       groups:
         - name: Templates/Applications
+      macros:
+        - macro: '{$CYRUS.LOG}'
+          value: /var/log/mail.log
+          description: 'Path to the syslog file Cyrus writes to (Debian/Ubuntu: /var/log/mail.log; RHEL/CentOS: /var/log/maillog).'
       items:
         - uuid: a518ac7c82e3484fb0ec622d3ff35cc9
           name: 'Cyrus: stats (raw JSON)'
@@ -252,6 +256,341 @@ zabbix_export:
               name: 'Cyrus: ManageSieve children >95% of maxchild (saturation imminent)'
               priority: HIGH
               description: 'timsieved children sustained above 95% of maxchild. Raise sieve maxchild in cyrus.conf.'
+        - uuid: ebbd12a0972a47b593727b7767076b7c
+          name: 'Cyrus: idled process alive'
+          type: DEPENDENT
+          key: cyrus.idled.alive
+          history: 7d
+          trends: '0'
+          value_type: UNSIGNED
+          valuemap:
+            name: Cyrus service state
+          description: 'idled daemon up (1) / down (0). Drives IMAP IDLE push; if down, clients fall back to polling.'
+          master_item:
+            key: cyrus.stats
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.idled
+          tags:
+            - tag: component
+              value: cyrus
+          triggers:
+            - uuid: 5fbac65c5ec643b3be46ec70c6fcd0fd
+              expression: 'last(/Cyrus IMAP by Zabbix agent/cyrus.idled.alive)=0'
+              name: 'Cyrus: idled process is not running'
+              priority: WARNING
+              description: 'IMAP IDLE push notifications are unavailable; clients will fall back to polling.'
+        - uuid: ee7fd02a058f4e52b5f75d067bffb13f
+          name: 'Cyrus: notifyd process alive'
+          type: DEPENDENT
+          key: cyrus.notifyd.alive
+          history: 7d
+          trends: '0'
+          value_type: UNSIGNED
+          valuemap:
+            name: Cyrus service state
+          description: 'notifyd daemon up (1) / down (0). Handles event notifications (e.g. Sieve notify).'
+          master_item:
+            key: cyrus.stats
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.notifyd
+          tags:
+            - tag: component
+              value: cyrus
+          triggers:
+            - uuid: a338925090494a479b68bd17524608d9
+              expression: 'last(/Cyrus IMAP by Zabbix agent/cyrus.notifyd.alive)=0'
+              name: 'Cyrus: notifyd process is not running'
+              priority: WARNING
+              description: 'Cyrus event notifications (notifyd) are not running.'
+        - uuid: 955c5a814ab24ae09828109586c144cb
+          name: 'Cyrus: mailboxes.db size'
+          type: DEPENDENT
+          key: cyrus.db.mailboxes.size
+          history: 7d
+          trends: 365d
+          value_type: UNSIGNED
+          units: B
+          description: 'Size of mailboxes.db in the Cyrus configdirectory. Trend it; unbounded growth can indicate a stuck checkpoint.'
+          master_item:
+            key: cyrus.stats
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.db.mailboxes_bytes
+          tags:
+            - tag: component
+              value: db
+        - uuid: f791f1924f78443c86487991d1117f80
+          name: 'Cyrus: deliver.db size'
+          type: DEPENDENT
+          key: cyrus.db.deliver.size
+          history: 7d
+          trends: 365d
+          value_type: UNSIGNED
+          units: B
+          description: 'Size of deliver.db (duplicate-delivery suppression DB) in the Cyrus configdirectory.'
+          master_item:
+            key: cyrus.stats
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.db.deliver_bytes
+          tags:
+            - tag: component
+              value: db
+        - uuid: d8d54821298a4191a53aeffd73a1280d
+          name: 'Cyrus: IMAP (143) response time'
+          type: ZABBIX_ACTIVE
+          key: 'net.tcp.service.perf[imap,127.0.0.1,143]'
+          delay: 1m
+          history: 7d
+          trends: 365d
+          value_type: FLOAT
+          units: s
+          description: 'IMAP connect+banner time from the agent; 0 = not responding.'
+          tags:
+            - tag: component
+              value: availability
+          triggers:
+            - uuid: 07399763e7724cab88b53ad4689f7c0b
+              expression: 'last(/Cyrus IMAP by Zabbix agent/net.tcp.service.perf[imap,127.0.0.1,143])=0'
+              name: 'Cyrus: IMAP port 143 not responding'
+              priority: HIGH
+              description: 'The IMAP service is not answering on 143 (refused, or accepted but no greeting — e.g. imap maxchild exhausted).'
+              dependencies:
+                - name: 'Cyrus: master process is not running'
+                  expression: 'last(/Cyrus IMAP by Zabbix agent/cyrus.master.alive)=0'
+            - uuid: 73df1decdecd4120862e8323e7dc6de3
+              expression: 'avg(/Cyrus IMAP by Zabbix agent/net.tcp.service.perf[imap,127.0.0.1,143],#3)>2'
+              name: 'Cyrus: IMAP (143) slow to respond'
+              priority: WARNING
+              description: 'IMAP greeting is slow (early sign of saturation or I/O pressure). Capped by the agent Timeout setting.'
+        - uuid: 3ee3b9850f4744728037833983ef31a9
+          name: 'Cyrus: IMAPS (993) reachable'
+          type: ZABBIX_ACTIVE
+          key: 'net.tcp.service.perf[tcp,127.0.0.1,993]'
+          delay: 1m
+          history: 7d
+          trends: 365d
+          value_type: FLOAT
+          units: s
+          description: 'TCP connect time to the IMAPS port; 0 = not listening. (TLS validity is checked separately.)'
+          tags:
+            - tag: component
+              value: availability
+          triggers:
+            - uuid: 172c2ed0ec9b4bb38156f1895cf372cb
+              expression: 'last(/Cyrus IMAP by Zabbix agent/net.tcp.service.perf[tcp,127.0.0.1,993])=0'
+              name: 'Cyrus: IMAPS port 993 not listening'
+              priority: HIGH
+              dependencies:
+                - name: 'Cyrus: master process is not running'
+                  expression: 'last(/Cyrus IMAP by Zabbix agent/cyrus.master.alive)=0'
+        - uuid: fb495de08cce483a9173159aeee66e99
+          name: 'Cyrus: POP3 (110) response time'
+          type: ZABBIX_ACTIVE
+          key: 'net.tcp.service.perf[pop,127.0.0.1,110]'
+          delay: 1m
+          history: 7d
+          trends: 365d
+          value_type: FLOAT
+          units: s
+          description: 'POP3 connect+banner time from the agent; 0 = not responding.'
+          tags:
+            - tag: component
+              value: availability
+          triggers:
+            - uuid: da1b309e0ffa463891afe517ecab68a9
+              expression: 'last(/Cyrus IMAP by Zabbix agent/net.tcp.service.perf[pop,127.0.0.1,110])=0'
+              name: 'Cyrus: POP3 port 110 not responding'
+              priority: HIGH
+              dependencies:
+                - name: 'Cyrus: master process is not running'
+                  expression: 'last(/Cyrus IMAP by Zabbix agent/cyrus.master.alive)=0'
+            - uuid: 3b60f395ae08479792ef41b5dc4c48c9
+              expression: 'avg(/Cyrus IMAP by Zabbix agent/net.tcp.service.perf[pop,127.0.0.1,110],#3)>2'
+              name: 'Cyrus: POP3 (110) slow to respond'
+              priority: WARNING
+        - uuid: b08cbd0ff98041c3a83a2cac0e9b0bbc
+          name: 'Cyrus: POP3S (995) reachable'
+          type: ZABBIX_ACTIVE
+          key: 'net.tcp.service.perf[tcp,127.0.0.1,995]'
+          delay: 1m
+          history: 7d
+          trends: 365d
+          value_type: FLOAT
+          units: s
+          description: 'TCP connect time to the POP3S port; 0 = not listening.'
+          tags:
+            - tag: component
+              value: availability
+          triggers:
+            - uuid: c8079862f77c45e897b373b13cf5740f
+              expression: 'last(/Cyrus IMAP by Zabbix agent/net.tcp.service.perf[tcp,127.0.0.1,995])=0'
+              name: 'Cyrus: POP3S port 995 not listening'
+              priority: HIGH
+              dependencies:
+                - name: 'Cyrus: master process is not running'
+                  expression: 'last(/Cyrus IMAP by Zabbix agent/cyrus.master.alive)=0'
+        - uuid: 9673fba612b5477fb98047bd3ea21100
+          name: 'Cyrus: LMTP (24) reachable'
+          type: ZABBIX_ACTIVE
+          key: 'net.tcp.service.perf[tcp,127.0.0.1,24]'
+          delay: 1m
+          history: 7d
+          trends: 365d
+          value_type: FLOAT
+          units: s
+          description: 'TCP connect time to the LMTP delivery port; 0 = not listening (inbound mail would defer).'
+          tags:
+            - tag: component
+              value: availability
+          triggers:
+            - uuid: 9faf06f66bd74293ab60d0a74bc14c80
+              expression: 'last(/Cyrus IMAP by Zabbix agent/net.tcp.service.perf[tcp,127.0.0.1,24])=0'
+              name: 'Cyrus: LMTP port 24 not listening'
+              priority: HIGH
+              description: 'LMTP is not accepting connections; inbound mail from the MTAs will defer.'
+              dependencies:
+                - name: 'Cyrus: master process is not running'
+                  expression: 'last(/Cyrus IMAP by Zabbix agent/cyrus.master.alive)=0'
+        - uuid: d7bb89bf86b3495197289b31950f887f
+          name: 'Cyrus: ManageSieve (4190) reachable'
+          type: ZABBIX_ACTIVE
+          key: 'net.tcp.service.perf[tcp,127.0.0.1,4190]'
+          delay: 1m
+          history: 7d
+          trends: 365d
+          value_type: FLOAT
+          units: s
+          description: 'TCP connect time to the ManageSieve port; 0 = not listening.'
+          tags:
+            - tag: component
+              value: availability
+          triggers:
+            - uuid: 353732b5407e4e02a6a2d7b1bf84ef22
+              expression: 'last(/Cyrus IMAP by Zabbix agent/net.tcp.service.perf[tcp,127.0.0.1,4190])=0'
+              name: 'Cyrus: ManageSieve port 4190 not listening'
+              priority: HIGH
+              dependencies:
+                - name: 'Cyrus: master process is not running'
+                  expression: 'last(/Cyrus IMAP by Zabbix agent/cyrus.master.alive)=0'
+        - uuid: d894fc85cae144f082eb4e66a7ee4adb
+          name: 'Cyrus: log IOERROR'
+          type: ZABBIX_ACTIVE
+          key: 'log[{$CYRUS.LOG},"IOERROR"]'
+          delay: 1m
+          history: 7d
+          value_type: LOG
+          description: 'Matches IOERROR lines (mailbox file / disk I/O errors, possible corruption).'
+          tags:
+            - tag: component
+              value: log
+          triggers:
+            - uuid: f21a3b4bfc5440c386efc9d03853a356
+              expression: 'length(last(/Cyrus IMAP by Zabbix agent/log[{$CYRUS.LOG},"IOERROR"]))>0'
+              name: 'Cyrus: IOERROR in log'
+              priority: HIGH
+              manual_close: 'YES'
+              description: 'Cyrus logged an IOERROR — investigate disk/mailbox integrity (reconstruct may be needed). Close manually after review.'
+        - uuid: 3dc4993d88794a1e924549ab51665868
+          name: 'Cyrus: log DBERROR'
+          type: ZABBIX_ACTIVE
+          key: 'log[{$CYRUS.LOG},"DBERROR"]'
+          delay: 1m
+          history: 7d
+          value_type: LOG
+          description: 'Matches DBERROR lines (Cyrus database problems — often precede an outage).'
+          tags:
+            - tag: component
+              value: log
+          triggers:
+            - uuid: 0592bcef39b246f7981341c49a16f2a2
+              expression: 'length(last(/Cyrus IMAP by Zabbix agent/log[{$CYRUS.LOG},"DBERROR"]))>0'
+              name: 'Cyrus: DBERROR in log'
+              priority: HIGH
+              manual_close: 'YES'
+              description: 'Cyrus logged a DBERROR — a Cyrus database may be corrupt or locked (ctl_cyrusdb -r). Close manually after review.'
+        - uuid: b977d899f3744e99ba4d2ed5eadf66bd
+          name: 'Cyrus: log fatal/exit'
+          type: ZABBIX_ACTIVE
+          key: 'log[{$CYRUS.LOG},"Fatal error|master:.*exited"]'
+          delay: 1m
+          history: 7d
+          value_type: LOG
+          description: 'Matches fatal errors and unexpected service exits reported by the Cyrus master.'
+          tags:
+            - tag: component
+              value: log
+          triggers:
+            - uuid: 1138366605964eb284796592823bf142
+              expression: 'length(last(/Cyrus IMAP by Zabbix agent/log[{$CYRUS.LOG},"Fatal error|master:.*exited"]))>0'
+              name: 'Cyrus: fatal error / service exit in log'
+              priority: AVERAGE
+              manual_close: 'YES'
+              description: 'A Cyrus service hit a fatal error or exited unexpectedly. Close manually after review.'
+        - uuid: 1a938080b4924c06a22c45cd06a607de
+          name: 'Cyrus: TLS certificate (993, raw)'
+          type: ZABBIX_ACTIVE
+          key: 'web.certificate.get[{HOST.CONN},993]'
+          delay: 1h
+          history: 1d
+          trends: '0'
+          value_type: TEXT
+          description: 'Master item: TLS certificate presented on the IMAPS port (agent2 web.certificate.get). All Cyrus TLS services normally share this certificate.'
+          tags:
+            - tag: component
+              value: tls
+        - uuid: b18f9c2e5b0d4c5fb8031b1b1621a905
+          name: 'Cyrus: TLS certificate days until expiry'
+          type: DEPENDENT
+          key: cyrus.cert.imaps.daysleft
+          history: 7d
+          trends: 365d
+          value_type: FLOAT
+          description: 'Days until the IMAPS certificate expires (derived from the presented cert, independent of hostname validation).'
+          master_item:
+            key: 'web.certificate.get[{HOST.CONN},993]'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var o = JSON.parse(value);
+                  return (o.x509.not_after.timestamp - Math.floor(Date.now() / 1000)) / 86400;
+          tags:
+            - tag: component
+              value: tls
+          triggers:
+            - uuid: eb568f95d4974c57848d68125254d4fd
+              expression: 'last(/Cyrus IMAP by Zabbix agent/cyrus.cert.imaps.daysleft)<14 and last(/Cyrus IMAP by Zabbix agent/cyrus.cert.imaps.daysleft)>=3'
+              name: 'Cyrus: TLS certificate expires in < 14 days'
+              priority: WARNING
+              description: 'Renew the certificate used by the Cyrus TLS services.'
+            - uuid: d8b2ba9827bc43baa52cc3c1b72bfac1
+              expression: 'last(/Cyrus IMAP by Zabbix agent/cyrus.cert.imaps.daysleft)<3'
+              name: 'Cyrus: TLS certificate expires in < 3 days (or expired)'
+              priority: HIGH
+              description: 'The Cyrus TLS certificate is about to expire or has expired — IMAPS/POP3S/STARTTLS clients will break.'
+        - uuid: 39c0917dba894904a0e5fc62b70ad075
+          name: 'Cyrus: TLS certificate validation result'
+          type: DEPENDENT
+          key: cyrus.cert.imaps.valid
+          history: 7d
+          value_type: CHAR
+          description: 'Validation result reported by web.certificate.get (valid / invalid). Meaningful only when the host interface matches the certificate hostname; collected for visibility, no trigger by default.'
+          master_item:
+            key: 'web.certificate.get[{HOST.CONN},993]'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.result.value
+          tags:
+            - tag: component
+              value: tls
       dashboards:
         - uuid: 1061606a78bd41a18583da78f29b897c
           name: Cyrus IMAP
@@ -285,9 +624,23 @@ zabbix_export:
                       value:
                         host: 'Cyrus IMAP by Zabbix agent'
                         name: 'Cyrus: utilisation % per service'
+                - type: graph
+                  name: 'Cyrus: service response time'
+                  'y': '10'
+                  width: '72'
+                  height: '5'
+                  fields:
+                    - type: INTEGER
+                      name: source_type
+                      value: '0'
+                    - type: GRAPH
+                      name: graphid
+                      value:
+                        host: 'Cyrus IMAP by Zabbix agent'
+                        name: 'Cyrus: service response time'
                 - type: item
                   name: 'Cyrus master process'
-                  'y': '10'
+                  'y': '15'
                   width: '18'
                   height: '3'
                   fields:
@@ -296,6 +649,18 @@ zabbix_export:
                       value:
                         host: 'Cyrus IMAP by Zabbix agent'
                         key: cyrus.master.alive
+                - type: item
+                  name: 'TLS cert days left'
+                  x: '18'
+                  'y': '15'
+                  width: '18'
+                  height: '3'
+                  fields:
+                    - type: ITEM
+                      name: itemid
+                      value:
+                        host: 'Cyrus IMAP by Zabbix agent'
+                        key: cyrus.cert.imaps.daysleft
       valuemaps:
         - uuid: 813a7ded24bb4af6a2c923744d51c954
           name: Cyrus service state
@@ -355,3 +720,38 @@ zabbix_export:
           item:
             host: 'Cyrus IMAP by Zabbix agent'
             key: cyrus.sieve.pct
+    - uuid: 2e9af6515b764befaf3b60d081bc0a72
+      name: 'Cyrus: service response time'
+      ymin_type_1: FIXED
+      yaxismin: '0'
+      graph_items:
+        - sortorder: '0'
+          color: 1A7C11
+          item:
+            host: 'Cyrus IMAP by Zabbix agent'
+            key: 'net.tcp.service.perf[imap,127.0.0.1,143]'
+        - sortorder: '1'
+          color: 2774A4
+          item:
+            host: 'Cyrus IMAP by Zabbix agent'
+            key: 'net.tcp.service.perf[pop,127.0.0.1,110]'
+        - sortorder: '2'
+          color: F63100
+          item:
+            host: 'Cyrus IMAP by Zabbix agent'
+            key: 'net.tcp.service.perf[tcp,127.0.0.1,993]'
+        - sortorder: '3'
+          color: A54F10
+          item:
+            host: 'Cyrus IMAP by Zabbix agent'
+            key: 'net.tcp.service.perf[tcp,127.0.0.1,995]'
+        - sortorder: '4'
+          color: 6C59DC
+          item:
+            host: 'Cyrus IMAP by Zabbix agent'
+            key: 'net.tcp.service.perf[tcp,127.0.0.1,24]'
+        - sortorder: '5'
+          color: AC8C14
+          item:
+            host: 'Cyrus IMAP by Zabbix agent'
+            key: 'net.tcp.service.perf[tcp,127.0.0.1,4190]'

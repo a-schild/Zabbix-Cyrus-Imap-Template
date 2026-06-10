@@ -35,11 +35,12 @@ A single agent item runs [`cyrus-check.sh`](cyrus-check.sh) once per interval an
 returns one JSON document:
 
 ```json
-{"master_alive":1,
+{"master_alive":1,"idled":1,"notifyd":1,
  "imap":  {"children":7,"maxchild":600,"pct":1},
  "pop3":  {"children":2,"maxchild":250,"pct":0},
  "lmtp":  {"children":1,"maxchild":100,"pct":1},
- "sieve": {"children":0,"maxchild":200,"pct":0}}
+ "sieve": {"children":0,"maxchild":200,"pct":0},
+ "db":    {"mailboxes_bytes":1234567,"deliver_bytes":89012}}
 ```
 
 The template turns that master item into **dependent items** via JSONPath
@@ -56,31 +57,94 @@ the caps; you never edit the template.
 
 ## What you get
 
-**Items** (one master + dependent):
+All metrics come from the single `cyrus.stats` master item plus a few active
+agent checks. Everything is collected via **Zabbix agent (active)**.
+
+**Saturation (from `cyrus.stats`):**
 
 | Key | Description |
 |-----|-------------|
 | `cyrus.stats` | Master item — raw JSON (active check) |
-| `cyrus.master.alive` | Cyrus master process up (1) / down (0) |
 | `cyrus.{imap,pop3,lmtp,sieve}.children` | Current worker count per service |
 | `cyrus.{imap,pop3,lmtp,sieve}.pct` | Worker count as % of that service's `maxchild` |
 
+**Processes & databases (from `cyrus.stats`):**
+
+| Key | Description |
+|-----|-------------|
+| `cyrus.master.alive` | Cyrus master process up (1) / down (0) |
+| `cyrus.idled.alive` | `idled` (IMAP IDLE push) up/down |
+| `cyrus.notifyd.alive` | `notifyd` (event notifications) up/down |
+| `cyrus.db.mailboxes.size` | `mailboxes.db` size in bytes (trend) |
+| `cyrus.db.deliver.size` | `deliver.db` size in bytes (trend) |
+
+**Availability & latency** (agent `net.tcp.service.perf`, run against `127.0.0.1`):
+
+| Key | Description |
+|-----|-------------|
+| `net.tcp.service.perf[imap,127.0.0.1,143]` | IMAP connect+banner time (0 = down) |
+| `net.tcp.service.perf[pop,127.0.0.1,110]` | POP3 connect+banner time |
+| `net.tcp.service.perf[tcp,127.0.0.1,{993,995,24,4190}]` | IMAPS / POP3S / LMTP / ManageSieve port reachable |
+
+**Log errors** (active `log[]`, path from `{$CYRUS.LOG}`):
+
+| Key | Matches |
+|-----|---------|
+| `log[{$CYRUS.LOG},"IOERROR"]` | Mailbox/disk I/O errors, possible corruption |
+| `log[{$CYRUS.LOG},"DBERROR"]` | Cyrus database errors |
+| `log[{$CYRUS.LOG},"Fatal error\|master:.*exited"]` | Fatal errors / unexpected service exits |
+
+**TLS certificate** (agent 2 `web.certificate.get` against the IMAPS port):
+
+| Key | Description |
+|-----|-------------|
+| `web.certificate.get[{HOST.CONN},993]` | Master item — raw certificate JSON |
+| `cyrus.cert.imaps.daysleft` | Days until expiry |
+| `cyrus.cert.imaps.valid` | Validation result (collected for visibility) |
+
 **Triggers:**
 
-* `cyrus.master.alive = 0` → **High**
-* each `*.pct` > 80 % (3-sample average) → **Warning**
-* each `*.pct` > 95 % (3-sample average) → **High**
+* `cyrus.master.alive = 0` → **High**; `idled`/`notifyd` down → **Warning**
+* each `*.pct` > 80 % / > 95 % (3-sample average) → **Warning** / **High**
+* each port not responding → **High** (suppressed when the master is down, via
+  trigger dependency); IMAP/POP3 slow (> 2 s avg) → **Warning**
+* `IOERROR` / `DBERROR` in log → **High**; fatal/exit → **Average** (manual close)
+* TLS cert < 14 days → **Warning**, < 3 days/expired → **High**
 
-**Graphs:** *children per service* and *utilisation % per service* (fixed 0–100).
+**Graphs:** *children per service*, *utilisation % per service* (fixed 0–100),
+and *service response time*.
 
-**Dashboard:** a **Cyrus** tab on the host's monitoring page with both graphs and
-a master-process status widget.
+**Dashboard:** a **Cyrus** tab on the host's monitoring page with all three
+graphs, a master-process status widget, and a TLS-days-left widget.
 
 ## Requirements
 
-* Zabbix **7.0** server and agent (Zabbix Agent 2 or Agent 1).
+* Zabbix **7.0** server and agent.
+* **Zabbix Agent 2** is required for the TLS certificate items
+  (`web.certificate.get`). Everything else works with Agent 1 too; drop those two
+  cert dependent items + their master if you only run Agent 1.
 * A Cyrus IMAP host you can deploy a small shell script to.
-* `pgrep` and (optionally) `systemctl` available on that host.
+* `pgrep`, `stat` and (optionally) `systemctl` on that host.
+* The agent user must be able to **read the Cyrus log** (`{$CYRUS.LOG}`) for the
+  log items — usually means adding the `zabbix` user to the `adm` group.
+* For the **DB-size** items, the agent user must be able to **traverse the Cyrus
+  `configdirectory`** (e.g. `/var/lib/cyrus`, mode `0750 cyrus:mail`). Add the
+  `zabbix` user to the owning group and restart the agent:
+  ```bash
+  usermod -aG mail zabbix && systemctl restart zabbix-agent2
+  ```
+  Only directory *search* permission is needed (not read on the DB files), so the
+  database modes can stay as they are. If the sizes report `0`, this is why.
+
+## Macros
+
+| Macro | Default | Purpose |
+|-------|---------|---------|
+| `{$CYRUS.LOG}` | `/var/log/mail.log` | Cyrus syslog path (RHEL/CentOS: `/var/log/maillog`). |
+
+The TLS items use the built-in `{HOST.CONN}` so they validate against the host's
+own interface address. For the `valid` result to be meaningful, that interface
+should be the certificate's hostname; the **days-left** metric works regardless.
 
 ## Repository layout
 
@@ -132,10 +196,13 @@ data points.
 
 | Setting | Default | Notes |
 |---------|---------|-------|
-| `CYRUS_CONF` | `/etc/cyrus.conf` | Path to `cyrus.conf`. Export it in the agent's environment if your distro differs. |
+| `CYRUS_CONF` | `/etc/cyrus.conf` | Path to `cyrus.conf` (read for `maxchild` caps). |
+| `IMAPD_CONF` | `/etc/imapd.conf` | Path to `imapd.conf` (read for `configdirectory`, to locate the databases). |
+| `{$CYRUS.LOG}` | `/var/log/mail.log` | Template macro — Cyrus syslog path for the log items. |
 
+Set the env vars in the agent's environment (or a wrapper) if your distro differs.
 The script detects the Cyrus master as `cyrmaster` (Debian/Ubuntu) and falls back
-to the `cyrus-imapd` systemd unit. Adjust `master_alive_val()` if your packaging
+to the `cyrus-imapd` systemd unit; adjust `master_alive_val()` if your packaging
 uses different names.
 
 ## Tuning guidance
