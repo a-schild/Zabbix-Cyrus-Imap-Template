@@ -638,9 +638,23 @@ zabbix_export:
                       value:
                         host: 'Cyrus IMAP by Zabbix agent'
                         name: 'Cyrus: service response time'
+                - type: graph
+                  name: 'Cyrus: database sizes'
+                  'y': '15'
+                  width: '72'
+                  height: '5'
+                  fields:
+                    - type: INTEGER
+                      name: source_type
+                      value: '0'
+                    - type: GRAPH
+                      name: graphid
+                      value:
+                        host: 'Cyrus IMAP by Zabbix agent'
+                        name: 'Cyrus: database sizes'
                 - type: item
                   name: 'Cyrus master process'
-                  'y': '15'
+                  'y': '20'
                   width: '18'
                   height: '3'
                   fields:
@@ -652,7 +666,7 @@ zabbix_export:
                 - type: item
                   name: 'TLS cert days left'
                   x: '18'
-                  'y': '15'
+                  'y': '20'
                   width: '18'
                   height: '3'
                   fields:
@@ -755,3 +769,20 @@ zabbix_export:
           item:
             host: 'Cyrus IMAP by Zabbix agent'
             key: 'net.tcp.service.perf[tcp,127.0.0.1,4190]'
+    - uuid: c8dba8784c834932b34c83d682b5b2fe
+      name: 'Cyrus: database sizes'
+      ymin_type_1: FIXED
+      yaxismin: '0'
+      graph_items:
+        - sortorder: '0'
+          drawtype: GRADIENT_LINE
+          color: 1A7C11
+          item:
+            host: 'Cyrus IMAP by Zabbix agent'
+            key: cyrus.db.mailboxes.size
+        - sortorder: '1'
+          drawtype: GRADIENT_LINE
+          color: 2774A4
+          item:
+            host: 'Cyrus IMAP by Zabbix agent'
+            key: cyrus.db.deliver.size

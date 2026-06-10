@@ -112,9 +112,9 @@ agent checks. Everything is collected via **Zabbix agent (active)**.
 * TLS cert < 14 days → **Warning**, < 3 days/expired → **High**
 
 **Graphs:** *children per service*, *utilisation % per service* (fixed 0–100),
-and *service response time*.
+*service response time*, and *database sizes* (mailboxes.db / deliver.db bytes).
 
-**Dashboard:** a **Cyrus** tab on the host's monitoring page with all three
+**Dashboard:** a **Cyrus** tab on the host's monitoring page with all four
 graphs, a master-process status widget, and a TLS-days-left widget.
 
 ## Requirements
@@ -126,7 +126,13 @@ graphs, a master-process status widget, and a TLS-days-left widget.
 * A Cyrus IMAP host you can deploy a small shell script to.
 * `pgrep`, `stat` and (optionally) `systemctl` on that host.
 * The agent user must be able to **read the Cyrus log** (`{$CYRUS.LOG}`) for the
-  log items — usually means adding the `zabbix` user to the `adm` group.
+  log items. This needs the log to be group-readable *and* `zabbix` in that group
+  — adding `zabbix` to `adm` only helps if the file is `root:adm 640`. If your
+  `mail.log` is `root:root` (some distros), set it group-readable in all three
+  places that own its mode (now, logrotate's `create 640 root adm`, and rsyslog's
+  `$FileCreateMode 0640` / `$FileGroup adm`), then `usermod -aG adm zabbix` and
+  restart the agent. Alternatively grant an ACL (`setfacl -m u:zabbix:r …`) and
+  re-apply it from a logrotate `postrotate`.
 * For the **DB-size** items, the agent user must be able to **traverse the Cyrus
   `configdirectory`** (e.g. `/var/lib/cyrus`, mode `0750 cyrus:mail`). Add the
   `zabbix` user to the owning group and restart the agent:
