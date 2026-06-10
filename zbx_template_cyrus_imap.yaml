@@ -1,0 +1,357 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 0b37c58202824307a81df451365d12e3
+      name: Templates/Applications
+  templates:
+    - uuid: 63879437d28248afba0cafb72ecd682b
+      template: Cyrus IMAP by Zabbix agent
+      name: Cyrus IMAP by Zabbix agent
+      description: |
+        Cyrus IMAP/POP3/LMTP/ManageSieve child-saturation monitoring.
+
+        A single master item `cyrus.stats` runs cyrus-check.sh once per interval
+        and returns JSON; dependent items split it per service. The maxchild caps
+        are read from the host's cyrus.conf at collection time, so the utilisation
+        percentages self-adjust if you retune them.
+
+        When a Cyrus service reaches its maxchild cap, the master accepts new
+        connections but cannot fork a worker to handle them, so clients stall
+        (IMAP/POP3 logins time out; LMTP deliveries defer). These items warn
+        before that happens.
+
+        Collection is via Zabbix ACTIVE agent (item type Zabbix agent (active)).
+        Requires on the monitored host:
+          - /usr/local/lib/zabbix/externalscripts/cyrus-check.sh (chmod 755)
+          - UserParameter=cyrus.stats,/usr/local/lib/zabbix/externalscripts/cyrus-check.sh json
+          - agent config: ServerActive=<zabbix server/proxy> AND
+            Hostname=<exact host name configured in Zabbix> (active checks are
+            matched to the host by Hostname; the host must also allow active checks).
+
+        Repository: https://github.com/a-schild/Zabbix-Cyrus-Imap-Template
+      groups:
+        - name: Templates/Applications
+      items:
+        - uuid: a518ac7c82e3484fb0ec622d3ff35cc9
+          name: 'Cyrus: stats (raw JSON)'
+          type: ZABBIX_ACTIVE
+          key: cyrus.stats
+          delay: 1m
+          history: 1h
+          trends: '0'
+          value_type: TEXT
+          description: 'Master item: one-pass JSON with per-service child counts, maxchild caps, and utilisation %.'
+          tags:
+            - tag: component
+              value: cyrus
+        - uuid: 4119dac0c3f94a429f1ea8a7a59c5abd
+          name: 'Cyrus: master process alive'
+          type: DEPENDENT
+          key: cyrus.master.alive
+          history: 7d
+          trends: '0'
+          value_type: UNSIGNED
+          valuemap:
+            name: Cyrus service state
+          master_item:
+            key: cyrus.stats
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.master_alive
+          tags:
+            - tag: component
+              value: cyrus
+          triggers:
+            - uuid: 0e073eba53ce4f72b6eedd6711a77523
+              expression: 'last(/Cyrus IMAP by Zabbix agent/cyrus.master.alive)=0'
+              name: 'Cyrus: master process is not running'
+              priority: HIGH
+              description: 'cyrmaster is not running (or cyrus-imapd unit inactive). All mailbox access and LMTP delivery to this host are down.'
+        - uuid: c578dc534047406880804ad714d3d558
+          name: 'Cyrus: IMAP children'
+          type: DEPENDENT
+          key: cyrus.imap.children
+          history: 7d
+          trends: 365d
+          value_type: UNSIGNED
+          description: 'Current imapd children (imap:143 + imaps:993 share the binary).'
+          master_item:
+            key: cyrus.stats
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.imap.children
+          tags:
+            - tag: component
+              value: imap
+        - uuid: d093edcdd0a644b699a759691a585eef
+          name: 'Cyrus: IMAP children utilisation'
+          type: DEPENDENT
+          key: cyrus.imap.pct
+          history: 7d
+          trends: 365d
+          value_type: UNSIGNED
+          units: '%'
+          description: 'imapd children as % of the imap (:143) maxchild cap.'
+          master_item:
+            key: cyrus.stats
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.imap.pct
+          tags:
+            - tag: component
+              value: imap
+          triggers:
+            - uuid: 3e8fe072844948448ad70a96c54bb675
+              expression: 'avg(/Cyrus IMAP by Zabbix agent/cyrus.imap.pct,#3)>80 and avg(/Cyrus IMAP by Zabbix agent/cyrus.imap.pct,#3)<=95'
+              name: 'Cyrus: IMAP children >80% of maxchild'
+              priority: WARNING
+              description: 'imapd children sustained above 80% of maxchild. Approaching the cap at which new IMAP connections start to stall.'
+            - uuid: 281c9c7ed4cd494ba000db9ecef509db
+              expression: 'avg(/Cyrus IMAP by Zabbix agent/cyrus.imap.pct,#3)>95'
+              name: 'Cyrus: IMAP children >95% of maxchild (saturation imminent)'
+              priority: HIGH
+              description: 'imapd children sustained above 95% of maxchild. New IMAP logins will start timing out (e.g. a front-end proxy logs "Login timed out in state=/none"). Raise imap maxchild in cyrus.conf.'
+        - uuid: 18b22126748244c6964326defc18e47c
+          name: 'Cyrus: POP3 children'
+          type: DEPENDENT
+          key: cyrus.pop3.children
+          history: 7d
+          trends: 365d
+          value_type: UNSIGNED
+          description: 'Current pop3d children (pop3:110 + pop3s:995 share the binary).'
+          master_item:
+            key: cyrus.stats
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.pop3.children
+          tags:
+            - tag: component
+              value: pop3
+        - uuid: aff00d64c7ec474eb0fdecfc445e4b9b
+          name: 'Cyrus: POP3 children utilisation'
+          type: DEPENDENT
+          key: cyrus.pop3.pct
+          history: 7d
+          trends: 365d
+          value_type: UNSIGNED
+          units: '%'
+          description: 'pop3d children as % of the pop3 (:110) maxchild cap.'
+          master_item:
+            key: cyrus.stats
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.pop3.pct
+          tags:
+            - tag: component
+              value: pop3
+          triggers:
+            - uuid: ae78564cfaf547618bb60acaad726318
+              expression: 'avg(/Cyrus IMAP by Zabbix agent/cyrus.pop3.pct,#3)>80 and avg(/Cyrus IMAP by Zabbix agent/cyrus.pop3.pct,#3)<=95'
+              name: 'Cyrus: POP3 children >80% of maxchild'
+              priority: WARNING
+              description: 'pop3d children sustained above 80% of maxchild.'
+            - uuid: 5f8eea4afc5f4ad9a16f64f64d8b677a
+              expression: 'avg(/Cyrus IMAP by Zabbix agent/cyrus.pop3.pct,#3)>95'
+              name: 'Cyrus: POP3 children >95% of maxchild (saturation imminent)'
+              priority: HIGH
+              description: 'pop3d children sustained above 95% of maxchild. Raise pop3 maxchild in cyrus.conf.'
+        - uuid: 3e82ef1e4c9a46f3be9600a2586f91db
+          name: 'Cyrus: LMTP children'
+          type: DEPENDENT
+          key: cyrus.lmtp.children
+          history: 7d
+          trends: 365d
+          value_type: UNSIGNED
+          description: 'Current lmtpd children (lmtp:24 + lmtpunix share the binary).'
+          master_item:
+            key: cyrus.stats
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.lmtp.children
+          tags:
+            - tag: component
+              value: lmtp
+        - uuid: b3d8f1eab278487784e9b48e099960e9
+          name: 'Cyrus: LMTP children utilisation'
+          type: DEPENDENT
+          key: cyrus.lmtp.pct
+          history: 7d
+          trends: 365d
+          value_type: UNSIGNED
+          units: '%'
+          description: 'lmtpd children as % of the lmtp (:24) maxchild cap.'
+          master_item:
+            key: cyrus.stats
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.lmtp.pct
+          tags:
+            - tag: component
+              value: lmtp
+          triggers:
+            - uuid: aac480dfa3f14fa7b0e75985c57cfe6b
+              expression: 'avg(/Cyrus IMAP by Zabbix agent/cyrus.lmtp.pct,#3)>80 and avg(/Cyrus IMAP by Zabbix agent/cyrus.lmtp.pct,#3)<=95'
+              name: 'Cyrus: LMTP children >80% of maxchild'
+              priority: WARNING
+              description: 'lmtpd children sustained above 80% of maxchild. Inbound delivery from the MTAs may start deferring.'
+            - uuid: 43c59d9c96634e168a752325dcee4efa
+              expression: 'avg(/Cyrus IMAP by Zabbix agent/cyrus.lmtp.pct,#3)>95'
+              name: 'Cyrus: LMTP children >95% of maxchild (saturation imminent)'
+              priority: HIGH
+              description: 'lmtpd children sustained above 95% of maxchild. Inbound mail will defer/retry. Raise lmtp maxchild in cyrus.conf.'
+        - uuid: 2aee23b7a8af48c7935bc557513fd42e
+          name: 'Cyrus: ManageSieve children'
+          type: DEPENDENT
+          key: cyrus.sieve.children
+          history: 7d
+          trends: 365d
+          value_type: UNSIGNED
+          description: 'Current timsieved children (sieve:4190 + sieveold:2000 share the binary).'
+          master_item:
+            key: cyrus.stats
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.sieve.children
+          tags:
+            - tag: component
+              value: sieve
+        - uuid: d9e2e2a7710642a5ae7698cb1090eda9
+          name: 'Cyrus: ManageSieve children utilisation'
+          type: DEPENDENT
+          key: cyrus.sieve.pct
+          history: 7d
+          trends: 365d
+          value_type: UNSIGNED
+          units: '%'
+          description: 'timsieved children as % of the sieve (:4190) maxchild cap.'
+          master_item:
+            key: cyrus.stats
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.sieve.pct
+          tags:
+            - tag: component
+              value: sieve
+          triggers:
+            - uuid: f437c6e8d3874a439de89e86567f1124
+              expression: 'avg(/Cyrus IMAP by Zabbix agent/cyrus.sieve.pct,#3)>80 and avg(/Cyrus IMAP by Zabbix agent/cyrus.sieve.pct,#3)<=95'
+              name: 'Cyrus: ManageSieve children >80% of maxchild'
+              priority: WARNING
+              description: 'timsieved children sustained above 80% of maxchild.'
+            - uuid: 0cd47aefc95142ab9ba9291fe201ce13
+              expression: 'avg(/Cyrus IMAP by Zabbix agent/cyrus.sieve.pct,#3)>95'
+              name: 'Cyrus: ManageSieve children >95% of maxchild (saturation imminent)'
+              priority: HIGH
+              description: 'timsieved children sustained above 95% of maxchild. Raise sieve maxchild in cyrus.conf.'
+      dashboards:
+        - uuid: 1061606a78bd41a18583da78f29b897c
+          name: Cyrus IMAP
+          pages:
+            - name: Cyrus
+              widgets:
+                - type: graph
+                  name: 'Cyrus: children per service'
+                  width: '72'
+                  height: '5'
+                  fields:
+                    - type: INTEGER
+                      name: source_type
+                      value: '0'
+                    - type: GRAPH
+                      name: graphid
+                      value:
+                        host: 'Cyrus IMAP by Zabbix agent'
+                        name: 'Cyrus: children per service'
+                - type: graph
+                  name: 'Cyrus: utilisation % per service'
+                  'y': '5'
+                  width: '72'
+                  height: '5'
+                  fields:
+                    - type: INTEGER
+                      name: source_type
+                      value: '0'
+                    - type: GRAPH
+                      name: graphid
+                      value:
+                        host: 'Cyrus IMAP by Zabbix agent'
+                        name: 'Cyrus: utilisation % per service'
+                - type: item
+                  name: 'Cyrus master process'
+                  'y': '10'
+                  width: '18'
+                  height: '3'
+                  fields:
+                    - type: ITEM
+                      name: itemid
+                      value:
+                        host: 'Cyrus IMAP by Zabbix agent'
+                        key: cyrus.master.alive
+      valuemaps:
+        - uuid: 813a7ded24bb4af6a2c923744d51c954
+          name: Cyrus service state
+          mappings:
+            - value: '0'
+              newvalue: Down
+            - value: '1'
+              newvalue: Up
+  graphs:
+    - uuid: 107b829727dd44fdab3fa8d7888ebf34
+      name: 'Cyrus: children per service'
+      graph_items:
+        - sortorder: '0'
+          color: 1A7C11
+          item:
+            host: 'Cyrus IMAP by Zabbix agent'
+            key: cyrus.imap.children
+        - sortorder: '1'
+          color: 2774A4
+          item:
+            host: 'Cyrus IMAP by Zabbix agent'
+            key: cyrus.pop3.children
+        - sortorder: '2'
+          color: F63100
+          item:
+            host: 'Cyrus IMAP by Zabbix agent'
+            key: cyrus.lmtp.children
+        - sortorder: '3'
+          color: A54F10
+          item:
+            host: 'Cyrus IMAP by Zabbix agent'
+            key: cyrus.sieve.children
+    - uuid: 1555febecf2a4a03906341652077cb61
+      name: 'Cyrus: utilisation % per service'
+      ymin_type_1: FIXED
+      yaxismin: '0'
+      ymax_type_1: FIXED
+      yaxismax: '100'
+      graph_items:
+        - sortorder: '0'
+          color: 1A7C11
+          item:
+            host: 'Cyrus IMAP by Zabbix agent'
+            key: cyrus.imap.pct
+        - sortorder: '1'
+          color: 2774A4
+          item:
+            host: 'Cyrus IMAP by Zabbix agent'
+            key: cyrus.pop3.pct
+        - sortorder: '2'
+          color: F63100
+          item:
+            host: 'Cyrus IMAP by Zabbix agent'
+            key: cyrus.lmtp.pct
+        - sortorder: '3'
+          color: A54F10
+          item:
+            host: 'Cyrus IMAP by Zabbix agent'
+            key: cyrus.sieve.pct
